@@ -138,6 +138,8 @@ KEY_SECTION_OUTPUT_STEELDESIGN = "section.output.superstructure.steeldesign"
 
 # ── Output field keys ─────────────────────────────────────────────────────────
 KEY_ANALYSIS_MEMBER           = "analysis.member"
+# Member dropdown entry that plots end diaphragms + cross bracings together
+VALUE_ANALYSIS_MEMBER_TRANSVERSE = "Transverse Members"
 KEY_ANALYSIS_LOAD_COMBINATION = "analysis.load_combination"
 KEY_ANALYSIS_FORCES           = "analysis.forces"
 KEY_ANALYSIS_DISPLAY_OPTIONS  = "analysis.display_options"

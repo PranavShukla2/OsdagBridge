@@ -1552,6 +1552,179 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
     return fig, summary_data
 
 
+# =============================================================================
+# TRANSVERSE MEMBERS (END DIAPHRAGMS + INTERMEDIATE CROSS BRACINGS)
+# =============================================================================
+
+def build_figure_transverse(ds, plot_key, nodes, members, member_map,
+                            edge_dist=0.0, eng_scale=1.0):
+    """
+    3-D diagram of a force / displacement component on the transverse members.
+
+    End diaphragms and intermediate cross bracings are drawn as one component
+    (each cross line of the grillage, between the outer girders). The values
+    come from results_data, which also decides which element tags are
+    transverse (member_map = results_data.classify_members(...)).
+
+    plot_key : a FORCE_MAP key (Fx, Fy, Fz, Mx, My, Mz) or a DISP_MAP key (Dx, Dy, Dz)
+    Returns (fig, summary_data) like the girder builders.
+    """
+    from .results_data import transverse_lines, member_end_forces, node_displacements
+
+    v_scale = _value_plot_scale(eng_scale)
+    is_disp = plot_key in DISP_MAP
+    is_moment = plot_key in FORCE_MAP and plot_key.startswith("M")
+    if is_disp:
+        label, unit = DISP_DISPLAY.get(plot_key, plot_key), "mm"
+    else:
+        label, unit = FORCE_DISPLAY.get(plot_key, plot_key), ("kNm" if is_moment else "kN")
+    # Moments plot positive-down like the girder BMD; everything else positive-up
+    geom_sign = -1.0 if is_moment else 1.0
+    color, fill = ("#C62828", "#EF9A9A") if is_moment else \
+                  ("#6A1B9A", None) if is_disp else ("#1565C0", "#90CAF9")
+
+    nodes = {int(k): v for k, v in nodes.items()}
+    members = {int(k): [int(n) for n in v] for k, v in members.items()}
+    end_set = set(member_map.get("end_diaphragms", []))
+    lines = transverse_lines(nodes, members, member_map.get("transverse", []))
+
+    fig = Figure(figsize=(14, 6), dpi=110, facecolor="white")
+    ax = fig.add_subplot(111, projection="3d", facecolor="white")
+
+    all_xs = [c[0] for c in nodes.values()]
+    all_zs = [c[2] for c in nodes.values()]
+    x_range = max(all_xs) - min(all_xs) or 1.0
+    z_range = max(all_zs) - min(all_zs) or 1.0
+    x_pad, z_pad = 0.05 * x_range, 0.05 * z_range
+    ax.set_xlim(min(all_xs) - x_pad, max(all_xs) + x_pad)
+    ax.set_ylim(min(all_zs) - z_pad, max(all_zs) + z_pad)
+
+    # Background: girder lines (green) and every transverse member (grey)
+    for line in member_map.get("girder_lines", []):
+        if not line:
+            continue
+        n_first, n_last = members[line[0]][0], members[line[-1]][1]
+        ax.plot([nodes[n_first][0], nodes[n_last][0]],
+                [nodes[n_first][2], nodes[n_last][2]], [0, 0],
+                color="#388E3C", linewidth=1.0, alpha=0.35, zorder=1)
+    for tag in member_map.get("transverse", []):
+        a, b = members[tag]
+        ax.plot([nodes[a][0], nodes[b][0]], [nodes[a][2], nodes[b][2]], [0, 0],
+                color="slategrey", linewidth=1.2, alpha=0.5, zorder=1)
+
+    # ---- values per element end, from results_data -------------------------
+    # Internal-force convention matches the girder diagrams: the value at a
+    # node is the i-end force of the element starting there, so the j-end
+    # force is negated.
+    end_values = {}   # tag -> (value at i node, value at j node)
+    if is_disp:
+        all_nodes = {n for t in member_map.get("transverse", []) for n in members[t]}
+        # DISP_MAP gives "dx"/"dy"/"dz"; the dataset components are "x"/"y"/"z"
+        disp = node_displacements(ds, all_nodes, DISP_MAP[plot_key][-1])
+        for line in lines:
+            for tag in line:
+                a, b = members[tag]
+                end_values[tag] = (disp.get(a, 0.0), disp.get(b, 0.0))
+    else:
+        comp_i, comp_j = FORCE_MAP[plot_key]
+        for tag, (vi, vj) in member_end_forces(ds, [t for l in lines for t in l], comp_i, comp_j).items():
+            end_values[tag] = (vi, -vj)
+
+    summary = {}
+    global_vmin = global_vmax = 0.0
+    extreme = {"max": None, "min": None}   # (value, x, z, geom)
+    scatter_objs, scatter_data = [], {}
+
+    for line in lines:
+        pts_x, pts_z, pts_v, pts_node = [], [], [], []
+        for tag in line:
+            if tag not in end_values:
+                continue
+            a, b = members[tag]
+            (x1, _, z1), (x2, _, z2) = nodes[a], nodes[b]
+            vi, vj = end_values[tag]
+            gi, gj = geom_sign * vi * v_scale, geom_sign * vj * v_scale
+            global_vmin = min(global_vmin, gi, gj)
+            global_vmax = max(global_vmax, gi, gj)
+
+            if fill:
+                ax.plot_surface(np.array([[x1, x2], [x1, x2]]), np.array([[z1, z2], [z1, z2]]),
+                                np.array([[0.0, 0.0], [gi, gj]]),
+                                color=fill, alpha=0.25, linewidth=0, antialiased=False, zorder=2)
+                ax.plot([x1, x1], [z1, z1], [0, gi], color=color, linewidth=1.0, alpha=0.7, zorder=3)
+                ax.plot([x2, x2], [z2, z2], [0, gj], color=color, linewidth=1.0, alpha=0.7, zorder=3)
+            ax.plot([x1, x2], [z1, z2], [gi, gj], color=color, linewidth=2.0, zorder=4)
+
+            group = "End Diaphragms" if tag in end_set else "Cross Bracings"
+            s = summary.setdefault(group, {"max": vi, "min": vi})
+            for val, x, z, g, node in ((vi, x1, z1, gi, a), (vj, x2, z2, gj, b)):
+                s["max"], s["min"] = max(s["max"], val), min(s["min"], val)
+                if extreme["max"] is None or val > extreme["max"][0]:
+                    extreme["max"] = (val, x, z, g)
+                if extreme["min"] is None or val < extreme["min"][0]:
+                    extreme["min"] = (val, x, z, g)
+                pts_x.append(x); pts_z.append(z); pts_v.append(val); pts_node.append(node)
+                if abs(val) > 1e-4:
+                    ax.text(x, z, g, f" {val:.2f} {unit}", color="#455A64", fontsize=7,
+                            zorder=6, gid="all_vals",
+                            bbox=dict(boxstyle="round,pad=0.1", facecolor="white",
+                                      alpha=0.7, edgecolor="none"))
+
+        if pts_x:
+            geom = [geom_sign * v * v_scale for v in pts_v]
+            sc = ax.scatter(pts_x, pts_z, geom, color=color, s=18, zorder=5, depthshade=False)
+            scatter_objs.append(sc)
+            scatter_data[id(sc)] = (pts_node, pts_x, pts_v)
+
+    for kind, gid, line_color in (("max", "max_line", "#FF4136"), ("min", "min_line", "#0074D9")):
+        if extreme[kind] is None:
+            continue
+        val, x, z, g = extreme[kind]
+        ax.plot([x, x], [z, z], [0, g], color=line_color, linewidth=1.5, linestyle="--",
+                zorder=3, gid=gid)
+        ax.text(x, z, g, f" {val:.2f} {unit}", color="#333333", fontsize=8, fontweight="bold",
+                zorder=7, gid=gid,
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.0))
+
+    if _MPLCURSORS and scatter_objs:
+        cursor = mplcursors.cursor(scatter_objs, hover=True)
+        fig._custom_cursor = cursor
+
+        @cursor.connect("add")
+        def on_add(sel, _data=scatter_data):
+            nids, xs_g, vals_g = _data[id(sel.artist)]
+            i = sel.index
+            sel.annotation.set_text(f"Node {nids[i]}\nX: {xs_g[i]:.2f}\n{label}: {vals_g[i]:.3f} {unit}")
+            sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="#BBBBBB")
+
+    bg_members = {t: members[t] for t in member_map.get("transverse", [])}
+    bg_nodes = {n: nodes[n] for t in bg_members for n in members[t]}
+    _add_supports(ax, nodes, members, edge_dist=edge_dist)
+    _add_node_number_labels(ax, bg_nodes)
+    _add_element_number_labels(ax, bg_nodes, bg_members)
+
+    ax.set_xlabel("Span Length (m)", fontsize=10, labelpad=8)
+    ax.set_ylabel("Bridge Width (m)", fontsize=10, labelpad=8)
+    ax.set_zlabel(f"{label} ({unit})", fontsize=10, labelpad=8)
+    _set_value_axis_tick_formatter(ax, v_scale, value_sign=geom_sign)
+    zmin, zmax = min(0.0, global_vmin), max(0.0, global_vmax)
+    pad = max(1e-6, 0.05 * max(1e-9, zmax - zmin))
+    ax.set_zlim(zmin - pad, zmax + pad)
+    ax.set_box_aspect([x_range, z_range, (x_range * 0.30) * max(v_scale, 1e-6)])
+    kind = "Deflection" if is_disp else ("Moment" if is_moment else "Force")
+    ax.set_title(f"Transverse Members {kind}  —  {label} ({unit})", fontsize=12, fontweight="bold", pad=12)
+    fig._eng_scale = v_scale
+    # Cross lines overlap in a straight front elevation, so look slightly along the span
+    ax.view_init(elev=22, azim=-60)
+    for pane in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
+        pane.fill = False
+        pane.set_edgecolor("#555555")
+    ax.grid(True, linestyle="--", linewidth=0.4, alpha=0.5)
+    _add_coordinate_triad(ax, nodes, eng_scale=v_scale)
+    ax.set_axis_off()
+    return fig, summary
+
+
 def figure_to_bytes(fig, fmt="png", dpi=150):
     """Convenience helper — render a matplotlib figure to raw bytes."""
     buf = io.BytesIO()

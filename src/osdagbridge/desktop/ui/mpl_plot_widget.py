@@ -16,12 +16,14 @@ from PySide6.QtCore import Qt, QEvent, QTimer
 
 from navcube import NavCubeOverlay, NavCubeStyle
 from osdagbridge.desktop.ui.utils.mpl_widget_navcube_sync import MatplotlibNavCubeSync
+from osdagbridge.core.utils.common import VALUE_ANALYSIS_MEMBER_TRANSVERSE
 
 from osdagbridge.core.bridge_types.plate_girder.plot_generator import (
     build_figure_sfd,
     build_figure_bmd,
     build_figure_deflection,
     build_figure_grillage,
+    build_figure_transverse,
     _add_node_number_labels,
     _add_element_number_labels,
     FORCE_MAP,
@@ -172,6 +174,7 @@ class MplPlotWidget(QWidget):
         self._nodes     = {}
         self._members   = {}
         self._edge_dist = 0.0
+        self._member_map = {}
         self._output_dock = None
         self._summary_data = {}
 
@@ -407,12 +410,17 @@ class MplPlotWidget(QWidget):
                     pass
 
     def setup(self, ds_all, loadcases: list, nodes: dict, members: dict,
-              edge_dist: float = 0.0):
+              edge_dist: float = 0.0, member_map: dict | None = None):
         self._ds_all    = ds_all
         self._loadcases = list(loadcases)
         self._nodes     = nodes
         self._members   = members
         self._edge_dist = edge_dist
+        # Longitudinal / transverse element tags (results_data.classify_members)
+        if member_map is None:
+            from osdagbridge.core.bridge_types.plate_girder.results_data import classify_members
+            member_map = classify_members(nodes, members, edge_dist=edge_dist)
+        self._member_map = member_map
 
         if hasattr(self, '_fig') and self._fig.axes:
             ax = self._fig.axes[0]
@@ -538,7 +546,12 @@ class MplPlotWidget(QWidget):
 
         # (Your existing if/elif/else block to build the new figures)
         eng_scale = self._eng_scale
-        if force_key in _SFD_KEYS:
+        if sel_girder == VALUE_ANALYSIS_MEMBER_TRANSVERSE:
+            self._fig, self._summary_data = build_figure_transverse(
+                ds, force_key, self._nodes, self._members, self._member_map,
+                edge_dist=self._edge_dist, eng_scale=eng_scale,
+            )
+        elif force_key in _SFD_KEYS:
             self._fig, self._summary_data = build_figure_sfd(
                 ds, force_key, self._nodes, self._members,
                 edge_dist=self._edge_dist, eng_scale=eng_scale,
@@ -588,7 +601,12 @@ class MplPlotWidget(QWidget):
                 return
 
             ax = self._fig.axes[0]
-            if old_elev is not None and old_azim is not None:
+            # Keep the user's camera while switching load case / component, but
+            # let girder <-> transverse switches start from their own default view.
+            is_transverse = sel_girder == VALUE_ANALYSIS_MEMBER_TRANSVERSE
+            same_kind = is_transverse == getattr(self, "_last_plot_transverse", False)
+            self._last_plot_transverse = is_transverse
+            if same_kind and old_elev is not None and old_azim is not None:
                 ax.view_init(elev=old_elev, azim=old_azim)
 
             title = ax.get_title()
@@ -716,6 +734,8 @@ class MplPlotWidget(QWidget):
                 old_azim = self._fig.axes[0].azim
             plt.close(self._fig)
             sel_girder = self._current_member()
+            if sel_girder == VALUE_ANALYSIS_MEMBER_TRANSVERSE:
+                sel_girder = "All"   # grillage view has no transverse-only filter
             self._fig = build_figure_grillage(self._nodes, self._members, edge_dist=self._edge_dist, selected_girder=sel_girder)
             self._attach_figure(self._fig)
             if self._fig.axes and old_elev is not None and old_azim is not None:
