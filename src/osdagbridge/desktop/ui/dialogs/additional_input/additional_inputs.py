@@ -668,14 +668,20 @@ class AdditionalInputs(QDialog):
         return True
 
     def _reveal_widget(self, widget):
-        """Switch every tab level above widget so it is on screen, then focus it."""
-        from PySide6.QtWidgets import QStackedWidget
+        """Switch every tab level above widget, scroll it into view, then focus it."""
+        from PySide6.QtWidgets import QStackedWidget, QScrollArea
         child = widget
         parent = widget.parentWidget()
+        scroll_areas = []
         while parent is not None and parent is not self:
             if isinstance(parent, QStackedWidget) and isinstance(parent.parentWidget(), QTabWidget):
                 parent.parentWidget().setCurrentWidget(child)
+            if isinstance(parent, QScrollArea):
+                scroll_areas.append(parent)
             child, parent = parent, parent.parentWidget()
+        # inner-most scroll area first, so outer ones scroll to the right spot
+        for area in scroll_areas:
+            area.ensureWidgetVisible(widget, 40, 40)
         widget.setFocus(Qt.OtherFocusReason)
 
     # ── Dialog Persistence ───────────────────────────────────────────────────────
