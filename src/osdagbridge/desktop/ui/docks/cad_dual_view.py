@@ -5,7 +5,7 @@ Author: Arushi
 """
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QScrollArea, QHBoxLayout, QPushButton, QLabel
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal
 from .cad_cross_section import CrossSectionCADWidget
 from .cad_top_view import TopViewCADWidget
 from osdagbridge.core.utils.common import *
@@ -17,7 +17,10 @@ from osdagbridge.desktop.cad.irc5_geometry import (
 
 class BridgeDualCADWidget(QWidget):
     """Split view widget showing both cross-section and top view with individual controls"""
-    
+
+    # Re-emits dimension edits from either view: (cad param name, typed value)
+    dimension_value_edited = Signal(str, float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cross_zoom_level = 1.0
@@ -58,6 +61,11 @@ class BridgeDualCADWidget(QWidget):
         self.cross_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         
         self.splitter.addWidget(self.cross_scroll)
+
+        # Labels on the main page CAD can be double-clicked and edited
+        # (the Additional Inputs preview reuses the same widget read-only).
+        self.cross_section_widget.label_editing_enabled = True
+        self.cross_section_widget.dimension_value_edited.connect(self.dimension_value_edited)
         
         # Create top view scroll area
         self.top_view_widget = TopViewCADWidget(self)
@@ -70,6 +78,9 @@ class BridgeDualCADWidget(QWidget):
         self.top_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         
         self.splitter.addWidget(self.top_scroll)
+
+        self.top_view_widget.label_editing_enabled = True
+        self.top_view_widget.dimension_value_edited.connect(self.dimension_value_edited)
         
         # Set equal sizes for both views
         self.splitter.setStretchFactor(0, 1)
