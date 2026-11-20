@@ -43,6 +43,12 @@ TYPE_SEGMENT_TABLE  = "segment_table"
 TYPE_ADAPTIVE = "adaptive"
 TYPE_ALL_CUSTOM = "all_custom"   # combo [All, Custom] where Custom opens popup dialog
 
+# Choice text that switches a field over to a user-entered value
+VALUE_CUSTOM = "Custom"
+# objectName suffixes of the two widgets built for a TYPE_MODE_LINE field
+MODE_LINE_MODE_SUFFIX  = ".mode"
+MODE_LINE_VALUE_SUFFIX = ".value"
+
 # ========== Type of Fields End ==========================================================
 
 # Keys for inputs (consistent dot notation for object names)

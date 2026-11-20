@@ -60,6 +60,8 @@ _CRASH_BARRIER_TAB_SCHEMA = {
                     ],
                     "on_change": "on_crash_barrier_type_changed",
                     "on_change_compute": {"function": "compute_crash_barrier_values"},
+                    # Fields the user must fill in when "Custom" is picked
+                    "custom_inputs": [KEY_CB_DENSITY, KEY_CB_WIDTH, KEY_CB_HEIGHT, KEY_CB_AREA, KEY_CB_LOAD],
                 }
             ]
         },
@@ -143,6 +145,7 @@ _MEDIAN_TAB_SCHEMA = {
                     ],
                     "on_change": "on_median_type_changed",
                     "on_change_compute": {"function": "compute_median_values"},
+                    "custom_inputs": [KEY_MD_DENSITY, KEY_MD_WIDTH, KEY_MD_HEIGHT, KEY_MD_AREA, KEY_MD_LOAD],
                 }
             ]
         },
@@ -219,6 +222,7 @@ _RAILING_TAB_SCHEMA = {
                     "choices": VALUES_RAILING_TYPE,
                     "on_change": "on_railing_type_changed",
                     "on_change_compute": {"function": "compute_railing_values"},
+                    "custom_inputs": [KEY_RL_WIDTH, KEY_RL_HEIGHT],
                 }
             ]
         },
@@ -249,6 +253,7 @@ _RAILING_TAB_SCHEMA = {
                     "type": TYPE_COMBOBOX,
                     "choices": ["As per IRC 6", "Custom"],
                     "on_change": "on_railing_load_mode_changed",
+                    "custom_inputs": [KEY_RL_LOAD_VALUE],
                 },
                 {
                     "id": KEY_RL_LOAD_VALUE,
@@ -275,6 +280,7 @@ _WEARING_COURSE_TAB_SCHEMA = {
                     "choices": VALUES_WEARING_COAT_MATERIAL,
                     "on_change": "on_wearing_material_changed",
                     "on_change_compute": {"function": "compute_wearing_course_values"},
+                    "custom_inputs": [KEY_WC_DENSITY],
                 }
             ]
         },
