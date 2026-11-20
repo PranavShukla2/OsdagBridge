@@ -3910,6 +3910,17 @@ class PlateGirderBridge:
         """Return (nodes, members) dicts built from the active openseespy model."""
         return build_nodes_members()
 
+    def get_member_classification(self) -> dict:
+        """
+        Longitudinal / transverse element tags of the analysed grillage
+        (see results_data.classify_members). Used by the plots to tell girder
+        elements apart from end diaphragms and cross bracings.
+        """
+        from .results_data import classify_members
+        nodes, members = self.get_nodes_members()
+        model = getattr(self.grillage_model, "model", None)
+        return classify_members(nodes, members, model=model, edge_dist=self.get_edge_dist())
+
     def get_edge_dist(self) -> float:
         """Return the deck overhang distance (0.0 when no overhang)."""
         return self.output_dict.get(KEY_TS_DECK_OVERHANG) or 0.0
