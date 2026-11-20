@@ -22,6 +22,23 @@ from osdagbridge.desktop.ui.dialogs.additional_input.ui_builder.common_ui_builde
 from osdagbridge.core.bridge_types.plate_girder.ui_fields_additional_input import ADDITIONAL_INPUTS_SCHEMA
 from osdagbridge.desktop.ui.dialogs.additional_input.ui_builder._load_combination_widget import LoadCombinationWidget
 from osdagbridge.desktop.ui.dialogs.additional_input.ui_builder.common_ui_builder import AdaptiveWidget
+from osdagbridge.desktop.ui.dialogs.additional_input.custom_input_rules import custom_rules
+
+EMPTY_CUSTOM_VALUE_ERROR = "Error: The custom value for '{name}' cannot be empty."
+UNSAVED_CHANGES_WARNING = (
+    "You have unsaved changes. Closing this window will discard them. "
+    "Do you want to proceed?"
+)
+DISCARD_BUTTON, CANCEL_BUTTON = "Discard", "Cancel"
+
+# Keys that only choose which girder/member the dialog is displaying.
+# Changing them is navigation, not an edit, so they don't count as unsaved changes.
+NAVIGATION_KEYS = frozenset({
+    KEY_MP_GD_SELECT_GIRDER, KEY_MP_GD_MEMBER_ID,
+    KEY_MP_STIFFENER_SELECT_MEMBER_ID,
+    KEY_MP_ED_SELECT_GIRDERS, KEY_MP_ED_MEMBER_ID,
+    KEY_MP_CB_SELECT_GIRDERS, KEY_MP_CB_MEMBER_ID,
+})
 
 # =================================================================================
 #   MAIN IMPLEMENTATION
@@ -57,6 +74,14 @@ class AdditionalInputs(QDialog):
  
         # Store all Compute functions to be called at Design
         self._compute_functions = []
+
+        # Unsaved-changes tracking. _saved_state is the working dict as it was
+        # when the dialog opened (or was last saved); is_modified flips to True
+        # as soon as an input changes after that point.
+        self.is_modified = False
+        self._saved_state: dict = {}
+        self._tracking_changes = False
+        self._close_confirmed = False
 
         self.setObjectName("AdditionalInputs")
         self.setMinimumSize(900, 520)
@@ -503,10 +528,158 @@ class AdditionalInputs(QDialog):
         for tab_widget in self.findChildren(QTabWidget):
             if hasattr(tab_widget, "refresh_active_tab"):
                 tab_widget.refresh_active_tab()
+        # Opening the dialog fills widgets and recomputes values programmatically;
+        # take the baseline once that has settled so it isn't counted as an edit.
+        QTimer.singleShot(0, self._mark_saved_state)
+
+    def closeEvent(self, event):  # Qt event: asks before throwing away unsaved edits
+        if not self._confirm_discard_changes():
+            event.ignore()
+            return
+        # QDialog.closeEvent ends up in reject(); don't ask a second time there.
+        self._close_confirmed = True
+        try:
+            super().closeEvent(event)
+        finally:
+            self._close_confirmed = False
+
+    def reject(self):  # Esc key closes a QDialog through reject(), bypassing closeEvent
+        if not self._close_confirmed and not self._confirm_discard_changes():
+            return
+        super().reject()
+
+    # ── Unsaved Changes ──────────────────────────────────────────────────────────
+
+    def _mark_saved_state(self):
+        self._saved_state = deepcopy(self.working_input_dict)
+        self.is_modified = False
+        self._tracking_changes = True
+
+    def _differs_from_saved(self) -> bool:
+        saved, current = self._saved_state, self.working_input_dict
+        for key in (saved.keys() | current.keys()) - NAVIGATION_KEYS:
+            if not self._same_value(saved.get(key), current.get(key)):
+                return True
+        return False
+
+    @staticmethod
+    def _same_value(a, b) -> bool:
+        if a == b:
+            return True
+        # "2.50" typed back over 2.5 is not a change
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    def _confirm_discard_changes(self) -> bool:
+        """True if the dialog may close: nothing unsaved, or the user chose Discard."""
+        if not self._tracking_changes:
+            return True
+        # is_modified catches edits made through the field handlers; the dict
+        # comparison also catches widgets that write to the dict directly, and
+        # clears the flag when an edit was typed and then undone by hand.
+        self.is_modified = self._differs_from_saved()
+        if not self.is_modified:
+            self._tracking_changes = False
+            return True
+
+        choice = CustomMessageBox(
+            title="Unsaved Changes",
+            text=UNSAVED_CHANGES_WARNING,
+            buttons=[DISCARD_BUTTON, CANCEL_BUTTON],
+            dialogType=MessageBoxType.Warning,
+        ).exec()
+        if choice != DISCARD_BUTTON:
+            return False
+
+        # Drop the edits; widgets are repopulated from input_dict on next open.
+        self.working_input_dict = deepcopy(self._saved_state)
+        self.is_modified = False
+        self._tracking_changes = False
+        return True
+
+    # ── Pre-save Validation ──────────────────────────────────────────────────────
+
+    def _find_empty_custom_field(self):
+        """
+        Walk every enabled top-level tab and return (widget, name) for the first
+        input whose controller is set to Custom but which was left empty.
+        Returns None when everything is filled.
+        """
+        for index, tab_def in enumerate(ADDITIONAL_INPUTS_SCHEMA):
+            if index >= self.tabs.count() or not self.tabs.isTabEnabled(index):
+                continue
+            tab = self.tabs.widget(index)
+            for rule in custom_rules(tab_def["schema"], tab_def["label"]):
+                widget = self._empty_custom_widget(tab, rule)
+                if widget is not None:
+                    return widget, rule.display_name
+        return None
+
+    def _empty_custom_widget(self, tab, rule):
+        if rule.adaptive:
+            if str(self.working_input_dict.get(rule.controller) or "") != VALUE_CUSTOM:
+                return None
+            adaptive = tab.findChild(AdaptiveWidget, rule.value_widget)
+            value = adaptive.currentWidget() if adaptive is not None else None
+        else:
+            controller = tab.findChild(QComboBox, rule.controller)
+            if controller is None or not controller.isEnabled():
+                return None
+            if controller.currentText() != VALUE_CUSTOM:
+                return None
+            value = tab.findChild(QLineEdit, rule.value_widget)
+
+        if not isinstance(value, QLineEdit) or not value.isEnabled():
+            return None
+        if not self._is_shown_in_form(value, tab):
+            return None
+        return value if not value.text().strip() else None
+
+    @staticmethod
+    def _is_shown_in_form(widget, root) -> bool:
+        """
+        False if the widget (or a container up to root) was hidden on purpose,
+        e.g. the RCC-only Density field while Custom crash barrier is chosen.
+        Pages that are merely not the current tab/stack page still count as shown.
+        """
+        from PySide6.QtWidgets import QStackedWidget
+        w = widget
+        while w is not None and w is not root:
+            parent = w.parentWidget()
+            if w.isHidden() and not isinstance(parent, QStackedWidget):
+                return False
+            w = parent
+        return True
+
+    def _reveal_widget(self, widget):
+        """Switch every tab level above widget so it is on screen, then focus it."""
+        from PySide6.QtWidgets import QStackedWidget
+        child = widget
+        parent = widget.parentWidget()
+        while parent is not None and parent is not self:
+            if isinstance(parent, QStackedWidget) and isinstance(parent.parentWidget(), QTabWidget):
+                parent.parentWidget().setCurrentWidget(child)
+            child, parent = parent, parent.parentWidget()
+        widget.setFocus(Qt.OtherFocusReason)
 
     # ── Dialog Persistence ───────────────────────────────────────────────────────
 
     def _save_inputs(self):  # on_change: validates all tabs then commits working_input_dict and emits CAD update signal
+
+        # A field switched to Custom but left blank must not be saved.
+        missing = self._find_empty_custom_field()
+        if missing is not None:
+            widget, name = missing
+            self._reveal_widget(widget)
+            CustomMessageBox(
+                title="Error",
+                text=EMPTY_CUSTOM_VALUE_ERROR.format(name=name),
+                buttons=["OK"],
+                dialogType=MessageBoxType.Critical,
+            ).exec()
+            return
 
         # Flush the currently-displayed stiffener member's widgets before committing.
         # _save_stiffener_member_data otherwise only runs when switching *away* from a
@@ -521,7 +694,9 @@ class AdditionalInputs(QDialog):
         cad = self.findChild(CrossSectionCADWidget, KEY_TS_CAD_PREVIEW)
         if cad:
             self.update_template_page_2d_cad.emit(cad.params)
-        
+
+        self._mark_saved_state()
+
         CustomMessageBox(
             title="Saved",
             text="Inputs saved successfully.",
@@ -598,6 +773,7 @@ class AdditionalInputs(QDialog):
         self._update_additional_input_cad()
 
     def _update_input_dict(self, key: str, value: str):  # utility: writes a value to working_input_dict, falling back to default if empty
+        previous = self.working_input_dict.get(key)
         if value is None or value == "":
             self.working_input_dict[key] = self.default_input_dict.get(key)
         else:
@@ -608,6 +784,10 @@ class AdditionalInputs(QDialog):
                     self.working_input_dict[key] = float(value)
                 except (ValueError, TypeError):
                     self.working_input_dict[key] = value
+
+        if (self._tracking_changes and key not in NAVIGATION_KEYS
+                and not self._same_value(previous, self.working_input_dict[key])):
+            self.is_modified = True
 
     # ── Tab Active State Utility ─────────────────────────────────────────────────
 
