@@ -70,6 +70,9 @@ class InputDock(QWidget):
         # Flag to track if any required field was changed
         # Use to reset the additonal input defaults from common design function
         self.is_require_field_changed = True
+        # Last value committed (editingFinished) per text field, so leaving a
+        # field without changing it doesn't count as a change.
+        self._committed_text: dict[str, str] = {}
 
         self.is_locked            = False
         self._current_design_mode = "Optimized"
@@ -953,11 +956,10 @@ class InputDock(QWidget):
         - QLineEdit: hard validation — corrects widget + input_dict if invalid, shows popup.
         """
 
-        if self._is_require_field(key):
-            self.is_require_field_changed = True
-
         # QComboBox passes str directly via currentTextChanged
         if isinstance(widget, str):
+            if self._is_require_field(key):
+                self.is_require_field_changed = True
             self._update_input_dict(key, widget)
             # Defer CAD refresh so all other currentTextChanged handlers
             # (e.g., median/footpath re-solve callbacks) finish first.
@@ -984,6 +986,13 @@ class InputDock(QWidget):
             widget.blockSignals(False)
             self._update_input_dict(key, str(corrected))
         # hard-validation end ----------------------
+
+        # Re-derive the additional-input defaults only when a required value
+        # really changed (focus simply leaving the field is not a change).
+        final_text = widget.text().strip()
+        if self._is_require_field(key) and self._committed_text.get(key) != final_text:
+            self.is_require_field_changed = True
+        self._committed_text[key] = final_text
 
         # Always update CAD after hard validation
         self.input_value_changed.emit()
@@ -1072,6 +1081,7 @@ class InputDock(QWidget):
                 widget.blockSignals(True)
                 widget.setText(text)
                 widget.blockSignals(False)
+                self._committed_text[key] = text.strip()
             elif isinstance(widget, QComboBox):
                 # Ensure the saved value exists as an option (handles custom materials)
                 if widget.findText(text) < 0:
