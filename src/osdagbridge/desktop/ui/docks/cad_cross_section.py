@@ -699,9 +699,10 @@ class CrossSectionCADWidget(EditableDimensionMixin, QWidget):
 
     def mouseMoveEvent(self, event):
         """Handle mouse hover for both labels and structural elements"""
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        self._update_label_hover(pos)
         if not getattr(self, 'interactive_hover', True):
             return
-        pos = event.position() if hasattr(event, 'position') else event.pos()
         
         # Check label hover first
         new_hovered = -1
@@ -741,6 +742,7 @@ class CrossSectionCADWidget(EditableDimensionMixin, QWidget):
             painter.setRenderHint(QPainter.Antialiasing)
             painter.fillRect(self.rect(), QColor(255, 255, 255))
             self.draw_cross_section(painter)
+            self._paint_label_hover(painter)
         except Exception as e:
             print(" PAINT ERROR:", repr(e))
         finally:

@@ -7,28 +7,34 @@ double-click. While painting, each widget records the rectangle of every
 dimension label it draws together with the CAD parameter it belongs to.
 On double-click we hit-test those rectangles and float a QLineEdit over the
 label. The widget only reports the typed value through its
-``dimension_value_edited`` signal; validating it and writing it into the
-input dictionaries is left to the template page, which owns that data.
+``dimension_value_edited(key, value)`` signal, already keyed by the input
+dictionary key from common.py and in that key's units. Validating it and
+writing it into the input dictionaries is left to the template page, which
+owns that data.
 """
 
-from PySide6.QtCore import Qt, QRectF, QEvent, QPoint
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtCore import Qt, QRectF, QEvent, QPoint, QLocale
+from PySide6.QtGui import QDoubleValidator, QPen, QColor
 from PySide6.QtWidgets import QLineEdit, QToolTip
 
+from osdagbridge.core.utils.common import (
+    KEY_SPAN, KEY_CARRIAGEWAY_WIDTH, KEY_TS_GIRDER_SPACING, KEY_TS_DECK_THICKNESS,
+)
 
-# CAD parameter -> (unit shown to the user, factor: CAD value (mm) -> shown value)
-# CAD params are stored in mm internally; span/width/spacing are typed in metres
-# (same as the input dock) and deck thickness in mm (same as Additional Inputs).
+# CAD parameter -> (input dictionary key, unit, factor: CAD value (mm) -> key units)
+# The CAD stores lengths in mm. Span, carriageway width and girder spacing are
+# entered in metres (as in the input dock / Typical Section tab), deck
+# thickness in mm (as in the Deck Details tab).
 EDITABLE_CAD_PARAMS = {
-    "span_length":       ("m",  1.0 / 1000.0),
-    "carriageway_width": ("m",  1.0 / 1000.0),
-    "girder_spacing":    ("m",  1.0 / 1000.0),
-    "deck_thickness":    ("mm", 1.0),
+    "span_length":       (KEY_SPAN,              "m",  1.0 / 1000.0),
+    "carriageway_width": (KEY_CARRIAGEWAY_WIDTH, "m",  1.0 / 1000.0),
+    "girder_spacing":    (KEY_TS_GIRDER_SPACING, "m",  1.0 / 1000.0),
+    "deck_thickness":    (KEY_TS_DECK_THICKNESS, "mm", 1.0),
 }
 
-LOCKED_LABEL_HINT = (
-    "{name} is derived from the other inputs and can't be edited here."
-)
+EDIT_HINT = "Double-click to edit"
+LOCKED_LABEL_HINT = "{name} is derived from the other inputs and can't be edited here."
+HOVER_COLOR = QColor(144, 175, 19)   # Osdag green
 
 
 class _InlineLineEdit(QLineEdit):
@@ -55,6 +61,8 @@ class EditableDimensionMixin:
         * ``self._clear_label_regions()`` at the start of ``paintEvent``
         * ``self._register_label(rect, param)`` for each editable label
         * ``self._register_locked_label(rect, name)`` for read-only labels
+        * ``self._paint_label_hover(painter)`` at the end of ``paintEvent``
+        * ``self._update_label_hover(pos)`` from ``mouseMoveEvent``
     """
 
     def _init_label_editing(self):
@@ -63,6 +71,7 @@ class EditableDimensionMixin:
         self._locked_label_regions = []     # [(QRectF, display name)]
         self._label_editor = None
         self._editing_param = None
+        self._hovered_label = None          # param or locked name under the mouse
 
     # -- registration (called while painting) ---------------------------------
 
@@ -80,16 +89,20 @@ class EditableDimensionMixin:
 
     # -- hit testing ------------------------------------------------------------
 
-    def _label_at(self, pos):
+    @staticmethod
+    def _hit(rect, pos):
         # A little slack around the text makes small labels easier to hit.
+        return rect.adjusted(-3, -3, 3, 3).contains(pos)
+
+    def _label_at(self, pos):
         for rect, param in self._editable_label_regions:
-            if rect.adjusted(-3, -3, 3, 3).contains(pos):
+            if self._hit(rect, pos):
                 return param
         return None
 
     def _locked_label_at(self, pos):
         for rect, name in self._locked_label_regions:
-            if rect.adjusted(-3, -3, 3, 3).contains(pos):
+            if self._hit(rect, pos):
                 return name
         return None
 
@@ -98,6 +111,44 @@ class EditableDimensionMixin:
             if p == param:
                 return rect
         return None
+
+    # -- hover feedback -----------------------------------------------------------
+
+    def _update_label_hover(self, pos):
+        """Pointer cursor, tooltip and highlight while over an editable label."""
+        if not self.label_editing_enabled or self._label_editor is not None:
+            return
+        param = self._label_at(pos)
+        hovered = param or self._locked_label_at(pos)
+        if hovered == self._hovered_label:
+            return
+        self._hovered_label = hovered
+        if param is not None:
+            self.setCursor(Qt.PointingHandCursor)
+            QToolTip.showText(self.mapToGlobal(QPoint(int(pos.x()), int(pos.y()) + 16)), EDIT_HINT, self)
+        else:
+            self.unsetCursor()
+            QToolTip.hideText()
+        self.update()
+
+    def leaveEvent(self, event):
+        if getattr(self, "_hovered_label", None) is not None:
+            self._hovered_label = None
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(event)
+
+    def _paint_label_hover(self, painter):
+        if not self.label_editing_enabled or self._label_editor is not None:
+            return
+        rect = self._rect_for_param(self._hovered_label) if self._hovered_label else None
+        if rect is None:
+            return
+        painter.save()
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(HOVER_COLOR, 1.2))
+        painter.drawRoundedRect(rect.adjusted(-3, -2, 3, 2), 3, 3)
+        painter.restore()
 
     # -- Qt event --------------------------------------------------------------
 
@@ -128,7 +179,7 @@ class EditableDimensionMixin:
     # -- editor lifecycle ----------------------------------------------------
 
     def _current_display_value(self, param):
-        unit, factor = EDITABLE_CAD_PARAMS[param]
+        _, unit, factor = EDITABLE_CAD_PARAMS[param]
         value = self.params.get(param)
         if value is None:
             return ""
@@ -141,22 +192,26 @@ class EditableDimensionMixin:
             return
         if self._label_editor is not None:
             self._close_label_editor(commit=False)
+        self._hovered_label = None
+        self.unsetCursor()
+        QToolTip.hideText()
 
         editor = _InlineLineEdit(self, on_cancel=lambda: self._close_label_editor(commit=False))
         validator = QDoubleValidator(0.0, 1e6, 3, editor)
         validator.setNotation(QDoubleValidator.StandardNotation)
+        validator.setLocale(QLocale.c())   # always '.' as decimal point
         editor.setValidator(validator)
         editor.setText(self._current_display_value(param))
         editor.setAlignment(Qt.AlignCenter)
-        editor.setToolTip(f"Enter value in {EDITABLE_CAD_PARAMS[param][0]} "
+        editor.setToolTip(f"Value in {EDITABLE_CAD_PARAMS[param][1]} "
                           "(Enter to apply, Esc to cancel)")
         editor.setStyleSheet(
             "QLineEdit { background: #ffffff; border: 1px solid #90AF13;"
             " border-radius: 3px; padding: 0px 3px; font: 9pt 'Arial'; }"
         )
 
-        width = max(70, int(rect.width()) + 10)
-        height = max(20, int(rect.height()) + 4)
+        width = max(80, int(rect.width()) + 10)
+        height = max(22, int(rect.height()) + 4)
         x = int(rect.center().x() - width / 2)
         y = int(rect.center().y() - height / 2)
         editor.setGeometry(x, y, width, height)
@@ -170,6 +225,7 @@ class EditableDimensionMixin:
         editor.show()
         editor.setFocus(Qt.MouseFocusReason)
         editor.selectAll()
+        self.update()
 
     def eventFilter(self, obj, event):
         editor = getattr(self, "_label_editor", None)
@@ -190,6 +246,7 @@ class EditableDimensionMixin:
         editor.removeEventFilter(self)
         editor.hide()
         editor.deleteLater()
+        self.update()
 
         if not commit or not text or text == self._current_display_value(param):
             return
@@ -197,4 +254,5 @@ class EditableDimensionMixin:
             value = float(text)
         except ValueError:
             return
-        self.dimension_value_edited.emit(param, value)
+        key = EDITABLE_CAD_PARAMS[param][0]
+        self.dimension_value_edited.emit(key, value)

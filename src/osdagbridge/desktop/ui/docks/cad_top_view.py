@@ -470,6 +470,7 @@ class TopViewCADWidget(EditableDimensionMixin, QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse hover for top view"""
         pos = event.position() if hasattr(event, 'position') else event.pos()
+        self._update_label_hover(pos)
         
         # top view hover logic
         new_hovered = None
@@ -492,6 +493,7 @@ class TopViewCADWidget(EditableDimensionMixin, QWidget):
         painter.fillRect(self.rect(), QColor(255, 255, 255))
         
         self.draw_top_view(painter)
+        self._paint_label_hover(painter)
         
     def draw_text_with_background(self, painter, x, y, text,
                               bg_color=QColor(255, 255, 255, 230), 

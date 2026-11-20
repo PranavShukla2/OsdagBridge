@@ -798,25 +798,17 @@ class CustomWindow(QWidget):
 
     # ---- 2D CAD in-place dimension editing -----------------------------------
 
-    # CAD parameter -> input dictionary key it is written back to
-    _CAD_PARAM_TO_KEY = {
-        "span_length":       KEY_SPAN,
-        "carriageway_width": KEY_CARRIAGEWAY_WIDTH,
-        "girder_spacing":    KEY_TS_GIRDER_SPACING,
-        "deck_thickness":    KEY_TS_DECK_THICKNESS,
-    }
-
-    def _on_cad_dimension_edited(self, param: str, value: float):
+    def _on_cad_dimension_edited(self, key: str, value: float):
         """
-        A dimension label on the 2D CAD was edited. Validate the value and push
-        it into the input dictionary; the CAD redraws from that dictionary.
+        A dimension label on the 2D CAD was edited (key is the input dictionary
+        key, value is in that key's units). Validate it and push it into the
+        input dictionary; the CAD redraws from that dictionary.
         Span and carriageway width are basic inputs, so they are routed through
         the input dock's own field handler (same validation, popups and dock
         text update as typing in the dock). Girder spacing and deck thickness
-        live in the additional inputs part of the dictionary.
+        belong to the additional inputs.
         """
-        key = self._CAD_PARAM_TO_KEY.get(param)
-        if key is None or not self.input_dock:
+        if not self.input_dock:
             return
 
         if self.input_dock.is_locked:
