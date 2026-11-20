@@ -601,12 +601,13 @@ class AdditionalInputs(QDialog):
 
     # ── Pre-save Validation ──────────────────────────────────────────────────────
 
-    def _find_empty_custom_field(self):
+    def _find_empty_custom_fields(self) -> list:
         """
-        Walk every enabled top-level tab and return (widget, name) for the first
-        input whose controller is set to Custom but which was left empty.
-        Returns None when everything is filled.
+        Walk every enabled top-level tab and return [(widget, name), ...] for
+        each input whose controller is set to Custom but which was left empty,
+        in tab order. Empty list when everything is filled.
         """
+        missing = []
         for index, tab_def in enumerate(ADDITIONAL_INPUTS_SCHEMA):
             if index >= self.tabs.count() or not self.tabs.isTabEnabled(index):
                 continue
@@ -614,8 +615,21 @@ class AdditionalInputs(QDialog):
             for rule in custom_rules(tab_def["schema"], tab_def["label"]):
                 widget = self._empty_custom_widget(tab, rule)
                 if widget is not None:
-                    return widget, rule.display_name
-        return None
+                    missing.append((widget, rule.display_name))
+        return missing
+
+    @staticmethod
+    def _set_error_state(widget, on: bool):
+        """Red border on a field (same style as the input dock); cleared on the next edit."""
+        if bool(widget.property("error")) == on:
+            return
+        widget.setProperty("error", on)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        if on and not widget.property("_error_hooked"):
+            widget.setProperty("_error_hooked", True)
+            widget.textChanged.connect(
+                lambda _t, w=widget: AdditionalInputs._set_error_state(w, False))
 
     def _empty_custom_widget(self, tab, rule):
         if rule.adaptive:
@@ -669,13 +683,14 @@ class AdditionalInputs(QDialog):
     def _save_inputs(self):  # on_change: validates all tabs then commits working_input_dict and emits CAD update signal
 
         # A field switched to Custom but left blank must not be saved.
-        missing = self._find_empty_custom_field()
-        if missing is not None:
-            widget, name = missing
-            self._reveal_widget(widget)
+        missing = self._find_empty_custom_fields()
+        if missing:
+            for widget, _ in missing:
+                self._set_error_state(widget, True)
+            self._reveal_widget(missing[0][0])
             CustomMessageBox(
                 title="Error",
-                text=EMPTY_CUSTOM_VALUE_ERROR.format(name=name),
+                text="\n".join(EMPTY_CUSTOM_VALUE_ERROR.format(name=name) for _, name in missing),
                 buttons=["OK"],
                 dialogType=MessageBoxType.Critical,
             ).exec()
