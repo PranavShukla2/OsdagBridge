@@ -20,7 +20,9 @@ The double-click handling lives in a small mixin (`desktop/ui/docks/cad_label_ed
 
 * `mouseDoubleClickEvent` hit-tests the registered rectangles and places a `QLineEdit` (with a `QDoubleValidator`) over the label, pre-filled with the current value.
 * **Enter** or clicking elsewhere (focus-out) applies the value; **Esc** cancels.
-* The widget doesn't change any data itself. It only emits `dimension_value_edited(param, value)`. `BridgeDualCADWidget` forwards that signal, and editing is switched on only for the main-page CAD. The Typical Section preview in Additional Inputs reuses the same widget, so it stays read-only.
+* Hovering an editable label shows a pointer cursor, a "Double-click to edit" tooltip and a thin green outline, so it's clear which labels are editable.
+* If labels overlap on a small canvas, the one whose centre is nearest the pointer is used. The deck thickness label is now always drawn; before, it disappeared when the slab was under 5 px tall on screen.
+* The widget doesn't change any data itself. It only emits `dimension_value_edited(key, value)`, where `key` is the `common.py` input key and the value is already in that key's units. `BridgeDualCADWidget` forwards that signal, and editing is switched on only for the main-page CAD. The Typical Section preview in Additional Inputs reuses the same widget, so it stays read-only.
 
 `template_page.py` handles the signal and writes the value back:
 
@@ -33,7 +35,7 @@ The double-click handling lives in a small mixin (`desktop/ui/docks/cad_label_ed
 
 For girder spacing I moved the solver construction out of `solve_extend_basic_input_dict()` into `_layout_solver()`. I then added `apply_girder_spacing()` in `defaults.py`, so the CAD and the existing code build the solver the same way. Invalid values aren't applied; the user gets the existing warning dialog with the validator's message. After every successful edit `update_cad_from_inputs()` runs, so both views redraw from the dictionary.
 
-One thing I noticed: changing any required basic input (span, carriageway width) re-runs `solve_extend_basic_input_dict`. That resets girder spacing and deck thickness to their computed defaults. This is existing behaviour (the Additional Inputs dialog works the same way), and I left it unchanged. The CAD handler does settle any pending re-solve *before* applying a spacing/thickness edit, so the edit isn't immediately overwritten.
+While testing I found that the input dock marked a required field as "changed" on every `editingFinished`, which Qt also emits whenever focus just leaves the field. The next CAD refresh then re-ran `solve_extend_basic_input_dict` and reset girder spacing and deck thickness to their defaults. Any value set from the CAD (or the dialog) was lost as soon as you clicked into and out of Span. The dock now remembers the last committed text and raises the flag only when it really differs. A genuine change to span or carriageway width still re-derives the layout, as before.
 
 ![Inline edit over the Girder Spacing label](images/cad_inline_edit.png)
 
@@ -51,9 +53,10 @@ I didn't want a hand-written list of parameter names, so the rules are derived f
 
 The rules carry only `KEY_*` constants from `common.py`. The only new constants are `VALUE_CUSTOM` and the two mode-line object-name suffixes, which the UI builder now also uses instead of literal strings.
 
-On **Save**, `_save_inputs()` walks every enabled top-level tab and checks each rule. A field counts only if its controller is enabled and set to Custom, and the value box is enabled and not deliberately hidden. (A Custom crash barrier hides Density and Area, for example; a page that's simply not the current sub-tab still counts.) At the first empty one, saving stops. The dialog switches to the tab that holds the field, focuses it, and shows the existing `CustomMessageBox` as an error:
+On **Save**, `_save_inputs()` walks every enabled top-level tab and checks each rule. A field counts only if its controller is enabled and set to Custom, and the value box is enabled and not deliberately hidden. (A Custom crash barrier hides Density and Area, for example; a page that's simply not the current sub-tab still counts.) If any are empty, saving stops. Every empty field gets the same red border the input dock uses (cleared as soon as you type in it). The dialog switches to the tab holding the first one and focuses it, and the existing `CustomMessageBox` shows one line per field:
 
 > Error: The custom value for 'Crash Barrier - Width (m)' cannot be empty.
+> Error: The custom value for 'Wind Load (WL) Inputs - Gust Factor, G' cannot be empty.
 
 The name comes from the field's label in the schema plus the sub-tab/section heading, with HTML such as `<sub>` stripped.
 
@@ -99,7 +102,15 @@ For the 20 m / 7.5 m test bridge (4 girders, 2 edge beams), this gives 78 longit
 
 ## Testing
 
-I wrote small scripts that build the real `CustomWindow` offscreen and drive it with `QTest`, with message boxes stubbed so nothing blocks:
+Unit tests (`tests/unit/test_results_classification.py`, `tests/unit/test_ui_enhancements.py`, run with `pytest tests/unit`) cover:
+
+* the member classification on a synthetic grillage, with and without overhang, including model groups taking priority over geometry;
+* force/displacement extraction and units;
+* rules derived from the schema, and label cleaning;
+* `apply_girder_spacing`, valid and impossible layouts;
+* the CAD label editor in an offscreen Qt session: double-click, type, Enter emits the right key and value; Esc cancels; locked labels don't open; editing is off by default.
+
+For the full flows I also wrote small scripts that build the real `CustomWindow` offscreen and drive it with `QTest`, with message boxes stubbed so nothing blocks:
 
 * **Task I:** double-click on each label opens the editor, Enter and focus-out apply, Esc cancels. Girder spacing 2.4 m re-solved the overhang to 0.60 m in both views. Span and carriageway edits updated the dock text. Span 500 went through the dock's validation and was corrected to 45 m with its popup. Deck thickness 50 was rejected with the validator message. A double-click on Overhang opens nothing.
 * **Task II:** Custom crash barrier with an empty Width gives the error naming the field and focuses it. An empty Custom gust factor on the Loading tab switches to that tab. Close with no changes closes silently; close after an edit with Cancel stays open; Esc with Discard closes and the edit is gone on reopen.
