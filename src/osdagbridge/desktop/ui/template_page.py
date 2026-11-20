@@ -17,7 +17,9 @@ from osdagbridge.desktop.ui.dialogs.loading_popup import LoadingDialogManager
 from osdagbridge.desktop.ui.cad_3d import CAD3DWindow
 
 from osdagbridge.core.bridge_types.plate_girder.ui_fields import FrontendData
-from osdagbridge.core.bridge_types.plate_girder.defaults import BASIC_INPUT_DICT, solve_extend_basic_input_dict
+from osdagbridge.core.bridge_types.plate_girder.defaults import (
+    BASIC_INPUT_DICT, solve_extend_basic_input_dict, apply_girder_spacing,
+)
 from osdagbridge.core.utils.common import *
 from osdagbridge.core.utils.osi_validator import validate_osi_inputs
 from osdagbridge.core.utils.logger import bridge_logger
@@ -787,8 +789,96 @@ class CustomWindow(QWidget):
         # Connect to input dock's value changed signals
         # This will update the CAD whenever any input field changes
         if hasattr(self.input_dock, 'input_value_changed'):
-            self.input_dock.input_value_changed.connect(self.update_cad_from_inputs)        
-            
+            self.input_dock.input_value_changed.connect(self.update_cad_from_inputs)
+
+        # Double-click edits made directly on the 2D CAD dimension labels
+        self.cad_comp_widget.dimension_value_edited.connect(self._on_cad_dimension_edited)
+
+    # ---- 2D CAD in-place dimension editing -----------------------------------
+
+    # CAD parameter -> input dictionary key it is written back to
+    _CAD_PARAM_TO_KEY = {
+        "span_length":       KEY_SPAN,
+        "carriageway_width": KEY_CARRIAGEWAY_WIDTH,
+        "girder_spacing":    KEY_TS_GIRDER_SPACING,
+        "deck_thickness":    KEY_TS_DECK_THICKNESS,
+    }
+
+    def _on_cad_dimension_edited(self, param: str, value: float):
+        """
+        A dimension label on the 2D CAD was edited. Validate the value and push
+        it into the input dictionary; the CAD redraws from that dictionary.
+        Span and carriageway width are basic inputs, so they are routed through
+        the input dock's own field handler (same validation, popups and dock
+        text update as typing in the dock). Girder spacing and deck thickness
+        live in the additional inputs part of the dictionary.
+        """
+        key = self._CAD_PARAM_TO_KEY.get(param)
+        if key is None or not self.input_dock:
+            return
+
+        if self.input_dock.is_locked:
+            CustomMessageBox(
+                title="Inputs Locked",
+                text="Inputs are locked. Unlock the input dock to edit dimensions from the CAD.",
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+            return
+
+        widget = self.input_dock._w(key)
+        if isinstance(widget, QLineEdit):
+            widget.blockSignals(True)
+            widget.setText(f"{value:g}")
+            widget.blockSignals(False)
+            self.input_dock._on_field_edited(key, widget)
+            return
+
+        self._apply_cad_additional_input(key, value)
+
+    def _apply_cad_additional_input(self, key: str, value: float):
+        # A pending basic-input change would make the next CAD refresh re-run the
+        # default layout and overwrite this edit, so settle it first.
+        if self.input_dock.is_require_field_changed:
+            try:
+                solve_extend_basic_input_dict(self.input_dict)
+                self.input_dock.is_require_field_changed = False
+            except Exception:
+                if key == KEY_TS_GIRDER_SPACING:
+                    CustomMessageBox(
+                        title="Input Error",
+                        text="Enter the span and carriageway width before changing the girder spacing.",
+                        dialogType=MessageBoxType.Warning,
+                    ).exec()
+                    return
+
+        candidate = dict(self.input_dict)
+        candidate[key] = value
+        result = self.input_dock.validator.validate_additional_inputs(key, candidate)
+        if result is not None:
+            _, message = result
+            CustomMessageBox(
+                title="Input Error",
+                text=f"{message}\nThe value was not applied.",
+                dialogType=MessageBoxType.Warning,
+            ).exec()
+            return
+
+        if key == KEY_TS_GIRDER_SPACING:
+            # Number of girders stays fixed; the overhang absorbs the change.
+            try:
+                apply_girder_spacing(self.input_dict, value)
+            except (ValueError, TypeError) as exc:
+                CustomMessageBox(
+                    title="Layout",
+                    text=f"{exc}\nThe value was not applied.",
+                    dialogType=MessageBoxType.Warning,
+                ).exec()
+                return
+        else:
+            self.input_dict[key] = value
+
+        self.update_cad_from_inputs()
+
     # Function for saving input dictionary into an OSI file
     def saveOSI_inputs(self):
         # Populate additional input defaults so they appear in the saved file
