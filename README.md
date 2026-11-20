@@ -3,6 +3,8 @@
 OsdagBridge is a modular, shared-core software plugin for the analysis and design of steel bridges within the Osdag ecosystem.  
 It supports desktop (PySide6), web (Django + React), and CLI interfaces through a unified Python core.
 
+> **Screening task (UI, 2D CAD and Plotting Enhancements):** see the [report](docs/screening_task/REPORT.md) and the [video demonstration](https://youtu.be/5JGVqugLyJ4).
+
 The system currently supports:
 - Plate Girder Bridges  
  

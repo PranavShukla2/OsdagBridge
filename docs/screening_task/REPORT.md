@@ -1,6 +1,7 @@
 # OsdagBridge Screening Task: UI, 2D CAD and Plotting Enhancements
 
-**Repository:** https://github.com/PranavShukla2/OsdagBridge (branch `screening-task`, based on `dev`)
+**Repository:** https://github.com/PranavShukla2/OsdagBridge (branch `dev`)
+**Video demonstration:** https://youtu.be/5JGVqugLyJ4
 
 All three subtasks are done on top of the `dev` branch. Below is how I approached each one, which files changed, and how I tested them.
 
