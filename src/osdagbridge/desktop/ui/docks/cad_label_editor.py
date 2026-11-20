@@ -94,17 +94,23 @@ class EditableDimensionMixin:
         # A little slack around the text makes small labels easier to hit.
         return rect.adjusted(-3, -3, 3, 3).contains(pos)
 
+    @classmethod
+    def _closest_hit(cls, regions, pos):
+        # Labels can overlap when the canvas is small; take the one whose
+        # centre is nearest to the click rather than whichever was drawn first.
+        hits = [(r, v) for r, v in regions if cls._hit(r, pos)]
+        if not hits:
+            return None
+        def dist2(r):
+            c = r.center()
+            return (c.x() - pos.x()) ** 2 + (c.y() - pos.y()) ** 2
+        return min(hits, key=lambda h: dist2(h[0]))[1]
+
     def _label_at(self, pos):
-        for rect, param in self._editable_label_regions:
-            if self._hit(rect, pos):
-                return param
-        return None
+        return self._closest_hit(self._editable_label_regions, pos)
 
     def _locked_label_at(self, pos):
-        for rect, name in self._locked_label_regions:
-            if self._hit(rect, pos):
-                return name
-        return None
+        return self._closest_hit(self._locked_label_regions, pos)
 
     def _rect_for_param(self, param):
         for rect, p in self._editable_label_regions:

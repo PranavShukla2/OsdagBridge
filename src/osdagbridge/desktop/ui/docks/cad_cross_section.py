@@ -2258,11 +2258,13 @@ class CrossSectionCADWidget(EditableDimensionMixin, QWidget):
         else:
             deck_center_x = (deck_slab_left + deck_slab_right) / 2
 
-        if deck_thick_px > 5:
-            local_deck_top_y = deck_top_y + self._compute_slope_offset(
-                deck_center_x, carriageway_start_x, carriageway_end_x
-            )
+        local_deck_top_y = deck_top_y + self._compute_slope_offset(
+            deck_center_x, carriageway_start_x, carriageway_end_x
+        )
 
+        # Arrows only when the slab is tall enough on screen; the label is
+        # always drawn so it can be read (and double-clicked) at any zoom.
+        if deck_thick_px > 5:
             painter.setPen(QPen(QColor(0, 0, 0), 0.8))
             painter.drawLine(QPointF(deck_center_x, local_deck_top_y), QPointF(deck_center_x, deck_bottom_y))
             
@@ -2291,20 +2293,20 @@ class CrossSectionCADWidget(EditableDimensionMixin, QWidget):
             painter.drawLine(QPointF(deck_center_x - tick_len, deck_bottom_y), 
                             QPointF(deck_center_x + tick_len, deck_bottom_y))
             
-            # Renamed to "Deck Thickness"
-            text = "Deck Thickness"
-            if self.show_carriageway_values:
-                text += f" = {deck_t_mm:.0f} mm"
-            font = QFont('Arial', 9, QFont.Normal)
-            painter.setFont(font)
-            metrics = painter.fontMetrics()
-            text_width = metrics.boundingRect(text).width()
-            text_x = deck_center_x - text_width / 2
-            text_y = local_deck_top_y - 8
-            
-            dt_rect = self.draw_text_with_background(painter, text_x, text_y, text,
-                                        QColor(255, 255, 255, 255), QColor(0, 0, 0), 9, False)
-            self._register_label(dt_rect, "deck_thickness")
+        # Renamed to "Deck Thickness"
+        text = "Deck Thickness"
+        if self.show_carriageway_values:
+            text += f" = {deck_t_mm:.0f} mm"
+        font = QFont('Arial', 9, QFont.Normal)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        text_width = metrics.boundingRect(text).width()
+        text_x = deck_center_x - text_width / 2
+        text_y = local_deck_top_y - 8
+        
+        dt_rect = self.draw_text_with_background(painter, text_x, text_y, text,
+                                    QColor(255, 255, 255, 255), QColor(0, 0, 0), 9, False)
+        self._register_label(dt_rect, "deck_thickness")
 
     def add_cross_section_hover_labels(self, painter, carriageway_start_x, carriageway_end_x,
                     left_barrier_x, right_barrier_x, deck_top_y, deck_bottom_y,
